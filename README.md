@@ -223,3 +223,7 @@ docs/profiling.md        Real gprof / gdb / TSan / contention findings
   polling the slot each tick.
 - Per-surface transforms (scale/rotation) so `composite` does real
   sampling rather than a 1:1 copy.
+
+## Author
+
+Mitul Goel — [github.com/Mitulol](https://github.com/Mitulol) · [linkedin.com/in/mitul-goel](https://linkedin.com/in/mitul-goel)
