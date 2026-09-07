@@ -1,4 +1,4 @@
-# compositor-sim
+# multithreaded-compositor-sim
 
 A small multithreaded C++ simulation of a display compositor: several
 independent "app" threads render frames at their own rate, and a single
