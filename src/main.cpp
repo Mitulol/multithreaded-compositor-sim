@@ -133,15 +133,25 @@ int main(int argc, char** argv) {
               << std::setw(12) << "TargetFPS"
               << std::setw(12) << "Produced"
               << std::setw(10) << "Dropped"
-              << "StaleReuse\n";
+              << std::setw(12) << "StaleReuse"
+              << "SlotLockContention\n";
     for (int i = 0; i < 5; ++i) {
         auto* s = surfaces[i];
+        const auto& c = s->slot().contention();
+        uint64_t acq = c.acquisitions.load();
         std::cout << std::left << std::defaultfloat << std::setprecision(4)
                   << std::setw(10) << s->id()
                   << std::setw(12) << fps[i]
                   << std::setw(12) << s->slot().publishedCount()
                   << std::setw(10) << s->slot().droppedCount()
-                  << compositor.staleReusesFor(s->id()) << "\n";
+                  << std::setw(12) << compositor.staleReusesFor(s->id());
+        if (acq > 0) {
+            std::cout << std::fixed << std::setprecision(2)
+                      << (100.0 * c.contended.load() / acq) << "% of " << acq << " acq";
+        } else {
+            std::cout << "n/a (not instrumented / lock-free)";
+        }
+        std::cout << "\n";
     }
 
     if (args.dumpEvery > 0)

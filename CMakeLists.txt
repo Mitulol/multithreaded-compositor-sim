@@ -14,15 +14,26 @@ find_package(Threads REQUIRED)
 
 include_directories(include)
 
+# -- options -----------------------------------------------------------
 # Swap the mutex-based LatestSlot for the lock-free triple buffer
 # everywhere the simulation uses an inter-thread frame slot.
 option(COMPOSITOR_SIM_LOCKFREE "Use the lock-free triple-buffer slot in the sim" OFF)
+# Record lock contention on LatestSlot's mutex (see include/contended_mutex.hpp).
+option(COMPOSITOR_SIM_INSTRUMENT "Instrument LatestSlot lock contention" OFF)
 
 add_executable(compositor_sim src/main.cpp)
 target_link_libraries(compositor_sim PRIVATE Threads::Threads)
 if(COMPOSITOR_SIM_LOCKFREE)
     target_compile_definitions(compositor_sim PRIVATE COMPOSITOR_SIM_LOCKFREE)
 endif()
+if(COMPOSITOR_SIM_INSTRUMENT)
+    target_compile_definitions(compositor_sim PRIVATE COMPOSITOR_SIM_INSTRUMENT)
+endif()
+
+# The contention benchmark always wants the instrumentation on.
+add_executable(slot_bench bench/slot_bench.cpp)
+target_link_libraries(slot_bench PRIVATE Threads::Threads)
+target_compile_definitions(slot_bench PRIVATE COMPOSITOR_SIM_INSTRUMENT)
 
 enable_testing()
 # Force asserts/checks on for the test binary regardless of build type.
