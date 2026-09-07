@@ -1,2 +1,4 @@
-frames/*.ppm
+frames/
 build/
+gmon.out
+*.o
