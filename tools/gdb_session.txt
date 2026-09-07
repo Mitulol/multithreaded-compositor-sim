@@ -1,0 +1,46 @@
+# Batch gdb session used to inspect the running compositor.
+#
+#   g++ -std=c++17 -O0 -g -Iinclude -DCOMPOSITOR_SIM_INSTRUMENT \
+#       src/main.cpp -o build/compositor_sim_dbg -pthread
+#   gdb -q -batch -x tools/gdb_session.txt ./build/compositor_sim_dbg
+#
+# What it demonstrates:
+#   1. catching the "latest-frame-wins" drop path in the act
+#   2. a whole-process thread dump: where every producer / the
+#      compositor / the input dispatcher is parked at that instant
+#   3. the measured lock-contention counters
+#   4. single-stepping one composite() call
+
+set pagination off
+set print thread-events off
+
+# 1. Break inside put() only when a value is already waiting unconsumed,
+#    i.e. this publish is about to drop a frame.
+break comp::LatestSlot<comp::Frame>::put if hasValue_ == true
+run --duration-ms 4000 --no-dump
+
+echo \n==== a frame is being dropped -- which surface, which sequence ====\n
+print value.surfaceId
+print value.sequence
+bt 4
+
+echo \n==== this surface's slot: drops, publishes, measured lock contention ====\n
+print *this
+
+echo \n==== every thread in the process, right now ====\n
+info threads
+thread apply all bt 3
+
+echo \n==== step into one composite() call on the main/compositor thread ====\n
+delete
+tbreak comp::Compositor::composite
+continue
+next
+next
+info args
+finish
+
+echo \n==== run to completion ====\n
+delete
+continue
+quit
