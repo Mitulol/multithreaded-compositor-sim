@@ -2,6 +2,7 @@
 #include "compositor.hpp"
 #include "event_queue.hpp"
 #include "event_dispatcher.hpp"
+#include "frame_slot.hpp"
 
 #include <iostream>
 #include <iomanip>
@@ -26,7 +27,7 @@ static void printStats(const char* label, const DurationStats::Summary& s) {
                << " p99=" << s.p99Ms << "ms\n";
 }
 
-int main(int argc, char** argv) {
+int main() {
     const auto runFor = 5000ms;
     const int screenW = 320, screenH = 240;
     ensureDir("frames");
@@ -80,7 +81,8 @@ int main(int argc, char** argv) {
     s0.stop(); s1.stop(); s2.stop(); s3.stop();
     dispatcher.stop();
 
-    std::cout << "=== compositor-sim summary (" << runFor.count() << "ms @ 60Hz vsync) ===\n\n";
+    std::cout << "=== compositor-sim summary (" << runFor.count() << "ms @ 60Hz vsync) ===\n";
+    std::cout << "frame slot impl: " << kFrameSlotImpl << "\n\n";
     printStats("Compositor tick interval", compositor.tickIntervalStats().summarize());
     printStats("Input event latency", dispatcher.latencyStats().summarize());
     std::cout << "Input events handled: " << dispatcher.handledCount() << "\n\n";

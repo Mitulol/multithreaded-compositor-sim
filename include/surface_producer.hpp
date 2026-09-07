@@ -1,6 +1,6 @@
 #pragma once
 #include "frame.hpp"
-#include "latest_slot.hpp"
+#include "frame_slot.hpp"
 #include <atomic>
 #include <thread>
 #include <array>
@@ -24,7 +24,7 @@ public:
               std::chrono::duration<double>(1.0 / targetFps))),
           color_(color) {}
 
-    LatestSlot<Frame>& slot() { return slot_; }
+    FrameSlot& slot() { return slot_; }
     int id() const { return id_; }
 
     void start(std::chrono::milliseconds runFor) {
@@ -74,7 +74,7 @@ private:
     int width_, height_;
     Clock::duration period_;
     Color color_;
-    LatestSlot<Frame> slot_;
+    FrameSlot slot_;
     std::thread thread_;
     std::atomic<bool> running_{false};
 };
