@@ -42,19 +42,26 @@ int main() {
     SurfaceProducer s2(2, screenW / 2, screenH / 2, 60.0, {60, 60, 200});
     SurfaceProducer s3(3, screenW / 2, screenH / 2, 90.0, {200, 200, 60});
 
+    // A fifth, translucent overlay spanning the middle of the screen at
+    // 45% opacity -- a heads-up / notification layer. It overlaps all
+    // four grid surfaces, so the composited output shows real "source
+    // over" blending rather than opaque tiles.
+    SurfaceProducer overlay(4, screenW, screenH / 3, 30.0, {240, 240, 255}, /*alpha=*/0.45);
+
     Compositor compositor(screenW, screenH, 60.0);
     compositor.addSurface(&s0, {0, 0});
     compositor.addSurface(&s1, {screenW / 2, 0});
     compositor.addSurface(&s2, {0, screenH / 2});
     compositor.addSurface(&s3, {screenW / 2, screenH / 2});
+    compositor.addSurface(&overlay, {0, screenH / 3});  // drawn last => on top
 
     EventQueue eventQueue;
     EventDispatcher dispatcher(eventQueue);
 
-    s0.start(runFor);
-    s1.start(runFor);
-    s2.start(runFor);
-    s3.start(runFor);
+    SurfaceProducer* surfaces[] = {&s0, &s1, &s2, &s3, &overlay};
+    double fps[] = {24.0, 30.0, 60.0, 90.0, 30.0};
+
+    for (auto* s : surfaces) s->start(runFor);
     dispatcher.start();
 
     // Input injector: a separate thread simulating a user generating
@@ -63,7 +70,7 @@ int main() {
     // else the system is doing.
     std::thread injector([&] {
         std::mt19937 rng(42);
-        std::uniform_int_distribution<int> surfaceDist(0, 3);
+        std::uniform_int_distribution<int> surfaceDist(0, 4);
         std::uniform_int_distribution<int> typeDist(0, 2);
         const auto start = Clock::now();
         const auto deadline = start + runFor;
@@ -78,7 +85,7 @@ int main() {
     compositor.run(runFor + 200ms, /*dumpEveryNTicks=*/30, "frames");
 
     injector.join();
-    s0.stop(); s1.stop(); s2.stop(); s3.stop();
+    for (auto* s : surfaces) s->stop();
     dispatcher.stop();
 
     std::cout << "=== compositor-sim summary (" << runFor.count() << "ms @ 60Hz vsync) ===\n";
@@ -92,9 +99,7 @@ int main() {
                << std::setw(12) << "Produced"
                << std::setw(10) << "Dropped"
                << "StaleReuse\n";
-    SurfaceProducer* surfaces[] = {&s0, &s1, &s2, &s3};
-    double fps[] = {24.0, 30.0, 60.0, 90.0};
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 5; ++i) {
         auto* s = surfaces[i];
         std::cout << std::left << std::setw(10) << s->id()
                    << std::setw(12) << fps[i]

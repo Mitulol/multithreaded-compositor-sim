@@ -2,6 +2,7 @@
 #include "frame.hpp"
 #include "surface_producer.hpp"
 #include "metrics.hpp"
+#include <algorithm>
 #include <vector>
 #include <thread>
 #include <atomic>
@@ -19,7 +20,8 @@ struct Placement { int x, y; };
 // reuses the previous frame for any surface that has nothing new
 // (frame persistence, same as a real display holding the last image
 // during a stalled app), blends them into one framebuffer at their
-// assigned screen positions, and records scheduling metrics.
+// assigned screen positions using premultiplied "source over", and
+// records scheduling metrics.
 class Compositor {
 public:
     Compositor(int screenW, int screenH, double vsyncHz)
@@ -51,6 +53,9 @@ public:
             if (tick > 0) tickInterval_.record(intervalNs);
             prevTickTime = now;
 
+            // Clear to the desktop background, then composite every
+            // surface back-to-front. addSurface() order is the z-order.
+            std::fill(framebuffer.begin(), framebuffer.end(), static_cast<uint8_t>(32));
             for (auto* surface : surfaces_) {
                 int id = surface->id();
                 auto fresh = surface->slot().take();
@@ -61,7 +66,7 @@ public:
                 }
                 auto it = lastFrame.find(id);
                 if (it != lastFrame.end()) {
-                    blit(framebuffer, it->second, placements_[id]);
+                    composite(framebuffer, it->second, placements_[id]);
                 }
             }
 
@@ -85,18 +90,33 @@ public:
     }
 
 private:
-    void blit(std::vector<uint8_t>& fb, const Frame& f, Placement p) {
+    // Premultiplied-alpha "source over": out = src + dst * (1 - src_a).
+    // Opaque pixels (src_a == 255) take a plain-copy fast path, which is
+    // the common case for a normal app window and is why a compositor
+    // tracks per-surface opacity at all.
+    void composite(std::vector<uint8_t>& fb, const Frame& f, Placement p) {
         for (int y = 0; y < f.height; ++y) {
             int screenY = p.y + y;
             if (screenY < 0 || screenY >= screenH_) continue;
             for (int x = 0; x < f.width; ++x) {
                 int screenX = p.x + x;
                 if (screenX < 0 || screenX >= screenW_) continue;
-                size_t srcIdx = (static_cast<size_t>(y) * f.width + x) * 3;
+                size_t srcIdx = (static_cast<size_t>(y) * f.width + x) * 4;
                 size_t dstIdx = (static_cast<size_t>(screenY) * screenW_ + screenX) * 3;
-                fb[dstIdx + 0] = f.rgb[srcIdx + 0];
-                fb[dstIdx + 1] = f.rgb[srcIdx + 1];
-                fb[dstIdx + 2] = f.rgb[srcIdx + 2];
+                uint8_t sr = f.rgba[srcIdx + 0];
+                uint8_t sg = f.rgba[srcIdx + 1];
+                uint8_t sb = f.rgba[srcIdx + 2];
+                uint8_t sa = f.rgba[srcIdx + 3];
+                if (sa == 255) {
+                    fb[dstIdx + 0] = sr;
+                    fb[dstIdx + 1] = sg;
+                    fb[dstIdx + 2] = sb;
+                } else if (sa != 0) {
+                    unsigned inv = 255u - sa;
+                    fb[dstIdx + 0] = static_cast<uint8_t>(sr + (fb[dstIdx + 0] * inv + 127) / 255);
+                    fb[dstIdx + 1] = static_cast<uint8_t>(sg + (fb[dstIdx + 1] * inv + 127) / 255);
+                    fb[dstIdx + 2] = static_cast<uint8_t>(sb + (fb[dstIdx + 2] * inv + 127) / 255);
+                }
             }
         }
     }
