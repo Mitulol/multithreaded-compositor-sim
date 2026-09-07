@@ -4,10 +4,14 @@
 #include "event_dispatcher.hpp"
 #include "frame_slot.hpp"
 
+#include <cstring>
+#include <cstdlib>
+#include <type_traits>
 #include <iostream>
 #include <iomanip>
 #include <random>
 #include <thread>
+#include <vector>
 #include <sys/stat.h>
 
 using namespace comp;
@@ -18,25 +22,52 @@ static void ensureDir(const std::string& path) {
 }
 
 static void printStats(const char* label, const DurationStats::Summary& s) {
-    std::cout << std::left << std::setw(24) << label
-               << "n=" << std::setw(6) << s.count
-               << " mean=" << std::fixed << std::setprecision(3) << std::setw(8) << s.meanMs << "ms"
-               << " stddev=" << std::setw(8) << s.stddevMs << "ms"
-               << " min=" << std::setw(8) << s.minMs << "ms"
-               << " max=" << std::setw(8) << s.maxMs << "ms"
-               << " p99=" << s.p99Ms << "ms\n";
+    std::cout << std::left << std::setw(26) << label << std::right
+              << "  n=" << std::setw(6) << s.count
+              << "  mean=" << std::fixed << std::setprecision(3) << std::setw(7) << s.meanMs << "ms"
+              << "  stddev=" << std::setw(7) << s.stddevMs << "ms"
+              << "  min=" << std::setw(7) << s.minMs << "ms"
+              << "  max=" << std::setw(7) << s.maxMs << "ms"
+              << "  p99=" << std::setw(7) << s.p99Ms << "ms\n";
 }
 
-int main() {
-    const auto runFor = 5000ms;
-    const int screenW = 320, screenH = 240;
-    ensureDir("frames");
+struct Args {
+    int durationMs = 5000;
+    double vsyncHz = 60.0;
+    double vsyncJitterMs = 0.0;
+    int dumpEvery = 30;
+};
 
-    // Four surfaces at different, deliberately mismatched frame rates
-    // versus the 60Hz display -- one slower (24fps, e.g. a video), two
-    // matched-ish (30/60fps), one faster than the display can show
-    // (90fps), so the compositor's drop/reuse behavior is exercised in
-    // both directions.
+static Args parseArgs(int argc, char** argv) {
+    Args a;
+    for (int i = 1; i < argc; ++i) {
+        auto eat = [&](const char* flag, auto& out) {
+            if (std::strcmp(argv[i], flag) == 0 && i + 1 < argc) {
+                out = static_cast<std::remove_reference_t<decltype(out)>>(std::atof(argv[++i]));
+                return true;
+            }
+            return false;
+        };
+        if (eat("--duration-ms", a.durationMs)) continue;
+        if (eat("--vsync-hz", a.vsyncHz)) continue;
+        if (eat("--vsync-jitter-ms", a.vsyncJitterMs)) continue;
+        if (eat("--dump-every", a.dumpEvery)) continue;
+        if (std::strcmp(argv[i], "--no-dump") == 0) { a.dumpEvery = 0; continue; }
+        std::cerr << "unknown/incomplete arg: " << argv[i] << "\n";
+    }
+    return a;
+}
+
+int main(int argc, char** argv) {
+    const Args args = parseArgs(argc, argv);
+    const auto runFor = std::chrono::milliseconds(args.durationMs);
+    const int screenW = 320, screenH = 240;
+    if (args.dumpEvery > 0) ensureDir("frames");
+
+    // Four opaque surfaces at deliberately mismatched frame rates versus
+    // the display -- one slower (24fps, e.g. a video), two matched-ish
+    // (30/60fps), one faster than the display can show (90fps) -- so the
+    // compositor's drop/reuse behavior is exercised in both directions.
     SurfaceProducer s0(0, screenW / 2, screenH / 2, 24.0, {200, 60, 60});
     SurfaceProducer s1(1, screenW / 2, screenH / 2, 30.0, {60, 200, 60});
     SurfaceProducer s2(2, screenW / 2, screenH / 2, 60.0, {60, 60, 200});
@@ -48,7 +79,7 @@ int main() {
     // over" blending rather than opaque tiles.
     SurfaceProducer overlay(4, screenW, screenH / 3, 30.0, {240, 240, 255}, /*alpha=*/0.45);
 
-    Compositor compositor(screenW, screenH, 60.0);
+    Compositor compositor(screenW, screenH, args.vsyncHz, args.vsyncJitterMs);
     compositor.addSurface(&s0, {0, 0});
     compositor.addSurface(&s1, {screenW / 2, 0});
     compositor.addSurface(&s2, {0, screenH / 2});
@@ -82,32 +113,38 @@ int main() {
         }
     });
 
-    compositor.run(runFor + 200ms, /*dumpEveryNTicks=*/30, "frames");
+    compositor.run(runFor + 200ms, args.dumpEvery, "frames");
 
     injector.join();
     for (auto* s : surfaces) s->stop();
     dispatcher.stop();
 
-    std::cout << "=== compositor-sim summary (" << runFor.count() << "ms @ 60Hz vsync) ===\n";
+    std::cout << "=== compositor-sim summary ("
+              << args.durationMs << "ms @ " << args.vsyncHz << "Hz vsync";
+    if (args.vsyncJitterMs > 0.0) std::cout << ", +/-" << args.vsyncJitterMs << "ms jitter";
+    std::cout << ") ===\n";
     std::cout << "frame slot impl: " << kFrameSlotImpl << "\n\n";
+
     printStats("Compositor tick interval", compositor.tickIntervalStats().summarize());
     printStats("Input event latency", dispatcher.latencyStats().summarize());
     std::cout << "Input events handled: " << dispatcher.handledCount() << "\n\n";
 
     std::cout << std::left << std::setw(10) << "Surface"
-               << std::setw(12) << "TargetFPS"
-               << std::setw(12) << "Produced"
-               << std::setw(10) << "Dropped"
-               << "StaleReuse\n";
+              << std::setw(12) << "TargetFPS"
+              << std::setw(12) << "Produced"
+              << std::setw(10) << "Dropped"
+              << "StaleReuse\n";
     for (int i = 0; i < 5; ++i) {
         auto* s = surfaces[i];
-        std::cout << std::left << std::setw(10) << s->id()
-                   << std::setw(12) << fps[i]
-                   << std::setw(12) << s->slot().publishedCount()
-                   << std::setw(10) << s->slot().droppedCount()
-                   << compositor.staleReusesFor(s->id()) << "\n";
+        std::cout << std::left << std::defaultfloat << std::setprecision(4)
+                  << std::setw(10) << s->id()
+                  << std::setw(12) << fps[i]
+                  << std::setw(12) << s->slot().publishedCount()
+                  << std::setw(10) << s->slot().droppedCount()
+                  << compositor.staleReusesFor(s->id()) << "\n";
     }
 
-    std::cout << "\nPPM frame snapshots written to ./frames/\n";
+    if (args.dumpEvery > 0)
+        std::cout << "\nPPM frame snapshots written to ./frames/\n";
     return 0;
 }

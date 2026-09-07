@@ -6,6 +6,7 @@
 #include <vector>
 #include <thread>
 #include <atomic>
+#include <random>
 #include <string>
 #include <fstream>
 #include <unordered_map>
@@ -24,10 +25,14 @@ struct Placement { int x, y; };
 // records scheduling metrics.
 class Compositor {
 public:
-    Compositor(int screenW, int screenH, double vsyncHz)
+    // vsyncJitterMs: peak +/- random perturbation applied to each tick's
+    // wake target, modelling a display clock that is not perfectly
+    // periodic (scheduling noise, thermal throttling). 0 = ideal clock.
+    Compositor(int screenW, int screenH, double vsyncHz, double vsyncJitterMs = 0.0)
         : screenW_(screenW), screenH_(screenH),
           period_(std::chrono::duration_cast<Clock::duration>(
-              std::chrono::duration<double>(1.0 / vsyncHz))) {}
+              std::chrono::duration<double>(1.0 / vsyncHz))),
+          jitterMs_(vsyncJitterMs) {}
 
     void addSurface(SurfaceProducer* surface, Placement placement) {
         surfaces_.push_back(surface);
@@ -39,6 +44,9 @@ public:
         std::unordered_map<int, Frame> lastFrame;
         std::unordered_map<int, uint64_t> staleReuses;
 
+        std::mt19937 rng(1234);
+        std::uniform_real_distribution<double> jitter(-jitterMs_, jitterMs_);
+
         const auto start = Clock::now();
         const auto deadline = start + runFor;
         auto nextTick = start;
@@ -46,7 +54,12 @@ public:
         int tick = 0;
 
         while (Clock::now() < deadline) {
-            std::this_thread::sleep_until(nextTick);
+            auto target = nextTick;
+            if (jitterMs_ > 0.0) {
+                target += std::chrono::duration_cast<Clock::duration>(
+                    std::chrono::duration<double, std::milli>(jitter(rng)));
+            }
+            std::this_thread::sleep_until(target);
             TimePoint now = Clock::now();
 
             double intervalNs = std::chrono::duration<double, std::nano>(now - prevTickTime).count();
@@ -130,6 +143,7 @@ private:
 
     int screenW_, screenH_;
     Clock::duration period_;
+    double jitterMs_;
     std::vector<SurfaceProducer*> surfaces_;
     std::unordered_map<int, Placement> placements_;
     std::unordered_map<int, uint64_t> staleReuses_;
